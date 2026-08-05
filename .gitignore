@@ -4,3 +4,5 @@ __pycache__/
 venv/
 .env
 key.txt
+.valura/
+stream_dump.json

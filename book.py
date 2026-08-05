@@ -41,6 +41,7 @@ class Book:
         # balances[(customer_id, account)] = debit-positive balance
         self.balances: dict[tuple[str, str], Decimal] = defaultdict(lambda: ZERO)
         self.seen: set[str] = set()
+        self.fee_charged: dict[str, Decimal] = {}
         # What you have not written yet. An unimplemented handler must not stop
         # the run: the client keeps consuming and tells you the list at the end.
         self.todo: dict[str, int] = defaultdict(int)
@@ -98,21 +99,53 @@ class Book:
 
     # -- yours --------------------------------------------------------------
     def on_fee_charged(self, p, ev):
-        raise NotImplementedError("Dr 2010 amount / Cr 1100 amount")
+        amount = money(D(p["amount"]))
+        cid = p["customer_id"]
+        self.fee_charged[ev["event_id"]] = amount
+        return [
+            leg("2010", cid, debit=amount),
+            leg("4000", cid, credit=amount)
+        ]
+        # raise NotImplementedError("Dr 2010 amount / Cr 1100 amount")
 
     def on_fee_refund(self, p, ev):
-        raise NotImplementedError(
-            "Dr 1100 / Cr 2010. The amount is NOT in this payload: look it up "
-            "from the fee_charged event named by refunds_source_id")
+        amount = self.fee_charged.get(p["refunds_source_id"])
+        cid = p["customer_id"]
+        if amount:
+            return [
+                leg("4000", cid, debit=amount),
+                leg("2010", cid, credit=amount)
+            ]
+        return []
+        # raise NotImplementedError(
+        #     "Dr 1100 / Cr 2010. The amount is NOT in this payload: look it up "
+        #     "from the fee_charged event named by refunds_source_id")
 
     def on_interest_credited(self, p, ev):
-        raise NotImplementedError(
-            "Dr 1100 gross / Cr 2010 customer_share / Cr 4200 the remainder")
+        cid = p["customer_id"]
+        customer_share = money(D(p["customer_share"]))
+        gross_amount = money(D(p["gross_amount"]))
+        company_share = money(gross_amount - customer_share)
+        return [
+            leg("2010", cid, credit=customer_share),
+            leg("4200", cid, credit=company_share),
+            leg("1100", cid, debit=gross_amount)
+        ]
+        # raise NotImplementedError(
+        #     "Dr 1100 gross / Cr 2010 customer_share / Cr 4200 the remainder")
 
     def on_transfer_between_customers(self, p, ev):
-        raise NotImplementedError(
-            "Dr 2010 (from_customer_id) / Cr 2010 (to_customer_id). Both legs "
-            "land on 2010, so the ACCOUNT nets to zero")
+        from_cid = p["from_customer_id"]
+        to_cid = p["to_customer_id"]
+        amount = money(D(p["amount"]))
+        gross_amount = money(amount - amount)
+        return [
+            leg("2010", from_cid, debit=amount),
+            leg("2010", to_cid, credit=amount)
+        ]
+        # raise NotImplementedError(
+        #     "Dr 2010 (from_customer_id) / Cr 2010 (to_customer_id). Both legs "
+        #     "land on 2010, so the ACCOUNT nets to zero")
 
     def on_fx_deposit(self, p, ev):
         raise NotImplementedError(
