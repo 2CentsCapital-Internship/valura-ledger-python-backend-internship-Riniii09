@@ -61,7 +61,7 @@ class ArenaClient:
             self.pending = body["postings"] + self.pending
             time.sleep(1)
 
-    def checkpoint(self, http: httpx.Client, cp_id: str) -> None:
+    def checkpoint(self, http: httpx.Client, cp_id: str, as_of_event_id: str | None = None) -> None:
         """Snapshot FIRST, send second.
 
         The reply must describe your book as at the checkpoint's place in the
@@ -69,7 +69,7 @@ class ArenaClient:
         another thread while the stream keeps running, reports a later state
         than the one being asked about.
         """
-        snap = self.book.snapshot()
+        snap = self.book.snapshot(as_of_event_id)
         self.flush(http)
         try:
             http.post(f"{self.url}/v1/checkpoint", params={"mode": self.mode},
@@ -81,6 +81,7 @@ class ArenaClient:
     # -- consuming ----------------------------------------------------------
     def handle(self, ev: dict) -> None:
         legs = self.book.apply(ev)
+        print(f"[{self.stats['events'] + 1}] Event: {ev['type']} (offset: {ev.get('offset')}) - produced {len(legs)} legs", flush=True)
         # An event you correctly reject still needs a submission, with no legs.
         self.pending.append({"event_id": ev["event_id"], "legs": legs or []})
         self.stats["events"] += 1
@@ -122,7 +123,9 @@ class ArenaClient:
                     else:
                         self.cursor = max(self.cursor, ev.get("offset", 0) + 1)
                         if ev["type"] == "checkpoint_request":
-                            self.checkpoint(http, ev["payload"]["checkpoint_id"])
+                            as_of_event_id = ev["payload"].get("as_of_event_id")
+                            print(f"[Checkpoint] ID: {ev['payload']['checkpoint_id']} | as_of: {as_of_event_id}", flush=True)
+                            self.checkpoint(http, ev["payload"]["checkpoint_id"], as_of_event_id)
                         else:
                             self.handle(ev)
 
