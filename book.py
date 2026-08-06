@@ -25,6 +25,36 @@ from decimal import Decimal, ROUND_HALF_UP
 D = Decimal
 ZERO = D("0.00")
 
+BROKERS = {
+    "BRK-A": {
+        "trades": ["equity", "etf"],
+        "brokerage": D("0.002"),
+        "custody": D("0.004"),
+        "broker_cost": D("0.009"),
+        "custody_cost": D("0.002"),
+        "min_fee": D("1.00"),
+        "ticket": D("0.35")
+    },
+    "BRK-B": {
+        "trades": ["equity", "bond"],
+        "brokerage": D("0.0015"),
+        "custody": D("0.005"),
+        "broker_cost": D("0.008"),
+        "custody_cost": D("0.003"),
+        "min_fee": D("2.50"),
+        "ticket": D("3.00")
+    },
+    "BRK-C": {
+        "trades": ["etf", "bond"],
+        "brokerage": D("0.0025"),
+        "custody": D("0.003"),
+        "broker_cost": D("0.0012"),
+        "custody_cost": D("0.001"),
+        "min_fee": D("0.50"),
+        "ticket": D("0.20")
+    }
+}
+
 
 def money(x: Decimal) -> Decimal:
     """2 decimal places, half away from zero. Not round(), which is half-even."""
@@ -42,6 +72,7 @@ class Book:
         self.balances: dict[tuple[str, str], Decimal] = defaultdict(lambda: ZERO)
         self.seen: set[str] = set()
         self.fee_charged: dict[str, Decimal] = {}
+        self.withdrawal_settings: dict[str, dict] = {}
         # What you have not written yet. An unimplemented handler must not stop
         # the run: the client keeps consuming and tells you the list at the end.
         self.todo: dict[str, int] = defaultdict(int)
@@ -148,19 +179,57 @@ class Book:
         #     "land on 2010, so the ACCOUNT nets to zero")
 
     def on_fx_deposit(self, p, ev):
-        raise NotImplementedError(
-            "Dr 1100 usd_at_market_rate / Cr 2010 usd_at_customer_rate / "
-            "Cr 4100 the difference")
+        market_amount = money(D(p["usd_at_market_rate"]))
+        customer_amount = money(D(p["usd_at_customer_rate"]))   
+        f_deposit = (market_amount - customer_amount)
+        cid = p["customer_id"]
+        return [
+            leg("1100", cid, debit=market_amount),
+            leg("2010", cid, credit=customer_amount),
+            leg("4100", cid, credit=f_deposit)
+        ]
+        # raise NotImplementedError(
+        #     "Dr 1100 usd_at_market_rate / Cr 2010 usd_at_customer_rate / "
+        #     "Cr 4100 the difference")
 
     def on_withdrawal_requested(self, p, ev):
-        raise NotImplementedError("Dr 2010 amount / Cr 2300 amount")
+        amount = money(D(p["amount"]))
+        cid = p["customer_id"]
+        wid = p["withdrawal_id"]
+        self.withdrawal_settings[wid] = {
+            "customer_id": cid,
+            "amount": amount
+        }
+        return [
+            leg("2010", cid, debit=amount),
+            leg("2300", cid, credit=amount)
+        ]
+        # raise NotImplementedError("Dr 2010 amount / Cr 2300 amount")
 
     def on_withdrawal_settled(self, p, ev):
-        raise NotImplementedError(
-            "Dr 2300 / Cr 1100. Look up the amount from the request")
+        wid = p["withdrawal_id"]
+        withdrawal = self.withdrawal_settings.get(wid, {})
+        if withdrawal:
+            cid = withdrawal["customer_id"]
+            amount = withdrawal["amount"]
+            return [
+                leg("2300", cid, debit=amount),
+                leg("1100", cid, credit=amount)
+            ]
+        # raise NotImplementedError(
+        #     "Dr 2300 / Cr 1100. Look up the amount from the request")
 
     def on_withdrawal_rejected(self, p, ev):
-        raise NotImplementedError("Dr 2300 / Cr 2010")
+        wid = p["withdrawal_id"]
+        withdrawal = self.withdrawal_settings.get(wid, {})
+        if withdrawal:
+            cid = withdrawal["customer_id"]
+            amount = withdrawal["amount"]
+            return [
+                leg("2300", cid, debit=amount),
+                leg("2010", cid, credit=amount)
+            ]
+        # raise NotImplementedError("Dr 2300 / Cr 2010")
 
     def on_order_placed(self, p, ev):
         raise NotImplementedError(
